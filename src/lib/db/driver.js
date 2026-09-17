@@ -1,4 +1,5 @@
 import { ensureDirs, DATA_FILE } from "./paths.js";
+import { isWorkersRuntime } from "@/lib/runtime.js";
 
 // Use global to survive Next.js dev hot-reload (module state resets on reload)
 if (!global._dbAdapter) global._dbAdapter = { instance: null, initPromise: null, logged: false };
@@ -19,6 +20,8 @@ async function tryBunSqlite() {
 async function tryBetterSqlite() {
   // Skip on Bun — better-sqlite3 native bindings unsupported
   if (process.versions.bun) return null;
+  // Skip on Workers — native addon, cannot load in workerd
+  if (isWorkersRuntime()) return null;
   // Skip on Node >= 24: the native addon SIGSEGVs on load there, which is a
   // process-level crash the try/catch below cannot recover from. node:sqlite covers it.
   const [nodeMajor] = process.versions.node.split(".").map(Number);
@@ -35,6 +38,8 @@ async function tryBetterSqlite() {
 async function tryNodeSqlite() {
   // Built-in since Node 22.5.0 — no install needed. Skip under Bun (no node:sqlite).
   if (process.versions.bun) return null;
+  // Skip on Workers — node:sqlite is a non-functional stub in workerd
+  if (isWorkersRuntime()) return null;
   const [maj, min] = process.versions.node.split(".").map(Number);
   if (maj < 22 || (maj === 22 && min < 5)) return null;
   try {
@@ -59,8 +64,20 @@ async function trySqlJs() {
 async function initAdapter() {
   ensureDirs();
   // Order per runtime:
-  //   Bun:  bun:sqlite → sql.js
-  //   Node: better-sqlite3 → node:sqlite (≥22.5) → sql.js
+  //   Workers: sql.js (only driver that works in workerd — wasm is inlined)
+  //   Bun:     bun:sqlite → sql.js
+  //   Node:    better-sqlite3 → node:sqlite (≥22.5) → sql.js
+  if (isWorkersRuntime()) {
+    const adapter = await trySqlJs();
+    if (!adapter) throw new Error("[DB] sql.js unavailable on Workers — asm.js build failed to load");
+    if (!state.logged) {
+      console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE} (ephemeral — Workers /tmp)`);
+      state.logged = true;
+    }
+    const { runMigrationOnce } = await import("./migrate.js");
+    await runMigrationOnce(adapter);
+    return adapter;
+  }
   let adapter = await tryBunSqlite();
   if (!adapter) adapter = await tryBetterSqlite();
   if (!adapter) adapter = await tryNodeSqlite();

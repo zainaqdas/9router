@@ -1,11 +1,34 @@
+// sql.js adapter — pure-JS SQLite (Emscripten). The fallback of last resort:
+// it is the only driver that works on Cloudflare Workers (node:sqlite is a
+// non-functional stub there and better-sqlite3 is a native addon).
+//
+// Workers specifics:
+// - workerd only allows *pre-compiled* WebAssembly modules (imported from a
+//   .wasm asset); WebAssembly.instantiate() on raw bytes is rejected with
+//   "Wasm code generation disallowed by embedder", and Emscripten's wasm
+//   runtime also wants to fetch the .wasm from a filesystem workerd lacks.
+//   So on Workers we load sql.js's asm.js build (dist/sql-asm.js) instead —
+//   pure JavaScript, no WebAssembly anywhere.
+// - Persistence: writes go to /tmp via the nodejs_compat fs shim (ephemeral,
+//   per-isolate). Treat the DB as scratch state on Workers — no cross-isolate
+//   durability without a KV/R2/D1 extension.
 import fs from "node:fs";
 import initSqlJs from "sql.js";
+import { isWorkersRuntime } from "@/lib/runtime.js";
 import { PRAGMA_SQL } from "../schema.js";
 
 let SQL = null;
 
 async function loadSql() {
   if (SQL) return SQL;
+  if (isWorkersRuntime()) {
+    // asm.js build — no .wasm fetch, no byte compilation. Bundlers resolve this
+    // subpath through sql.js's "./dist/*" exports map.
+    const mod = await import("sql.js/dist/sql-asm.js");
+    SQL = await (mod.default ?? mod)();
+    return SQL;
+  }
+  // Node/Bun: default locateFile resolves sql-wasm.wasm from node_modules on disk.
   SQL = await initSqlJs();
   return SQL;
 }
@@ -105,11 +128,13 @@ export async function createSqlJsAdapter(filePath) {
     db.close();
   }
 
-  // Flush on shutdown
-  const flush = () => { if (dirty) try { persist(); } catch {} };
-  process.on("beforeExit", flush);
-  process.on("SIGINT", flush);
-  process.on("SIGTERM", flush);
+  // Flush on shutdown — Node only (Workers has no process signal semantics).
+  if (!isWorkersRuntime()) {
+    const flush = () => { if (dirty) { try { persist(); } catch {} } };
+    process.on("beforeExit", flush);
+    process.on("SIGINT", flush);
+    process.on("SIGTERM", flush);
+  }
 
   return { driver: "sql.js", run, get, all, exec, transaction, close, raw: db };
 }

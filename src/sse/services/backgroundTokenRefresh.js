@@ -2,6 +2,7 @@
 // Fail-open everywhere: tick errors and per-connection failures never kill the interval.
 
 import * as log from "../utils/logger.js";
+import { isWorkersRuntime } from "@/lib/runtime.js";
 import { getRefreshLeadMs } from "open-sse/services/tokenRefresh.js";
 import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.js";
 
@@ -147,6 +148,13 @@ export function startBackgroundTokenRefresh({ intervalMs } = {}) {
   if (started) return false;
   if (isTruthyEnv(process.env.DISABLE_BACKGROUND_TOKEN_REFRESH)) return false;
   if (isNonServerRuntime()) return false;
+
+  // Workers: timers are tied to an isolate that gets evicted; a background
+  // refresher that only sometimes runs is worse than none (tokens expire,
+  // then every request pays the refresh latency). On-request refresh still
+  // runs via tokenRefresh.js. Opt in explicitly with ENABLE_BACKGROUND_JOBS=1
+  // if you know the isolate is long-lived (e.g. wrangler dev).
+  if (isWorkersRuntime() && !isTruthyEnv(process.env.ENABLE_BACKGROUND_JOBS)) return false;
 
   started = true;
   const period = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : DEFAULT_INTERVAL_MS;

@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CATALOG_FILE, CATALOG_RAW_FILE, invalidateCatalog, installCatalogSource } from "open-sse/providers/catalogOverride.js";
+import { isLongLivedServer } from "@/lib/runtime.js";
 
 const CATALOG_URL = "https://models.dev/api.json";
 const FETCH_TIMEOUT_MS = 60000;
@@ -231,9 +232,12 @@ function restoreEtag() {
 }
 
 // Schedule the recurring sync. Disable entirely with MODEL_CATALOG_SYNC=off.
+// Also skipped in Workers / build phases — the catalog file lives next to the
+// DB on a writable FS, which Workers cannot provide (see isLongLivedServer).
 export function startModelCatalogSync() {
   if (timer) return;
   if (String(process.env.MODEL_CATALOG_SYNC || "").toLowerCase() === "off") return;
+  if (!isLongLivedServer()) return;
   restoreEtag();
 
   const schedule = (delay) => {

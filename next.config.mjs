@@ -8,6 +8,10 @@ const tracingRoot = process.env.NEXT_TRACING_ROOT_MODE === "workspace"
   ? join(projectRoot, "..")
   : projectRoot;
 const proxyClientMaxBodySize = process.env.NINEROUTER_PROXY_CLIENT_MAX_BODY_SIZE || "128mb";
+// Page-data/static-gen worker count for `next build`. Defaults to all cores,
+// which OOMs inside memory-capped sandboxes/CI (2GB cgroup → "Killed" during
+// "Collecting page data"). Set NEXT_BUILD_CPUS=2-4 there.
+const buildCpus = Number(process.env.NEXT_BUILD_CPUS) || undefined;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -26,7 +30,12 @@ const nextConfig = {
   },
   outputFileTracingRoot: tracingRoot,
   outputFileTracingExcludes: {
-    "*": ["./gitbook/**/*"]
+    "*": [
+      "./gitbook/**/*",
+      // CLI launcher package (npm `9router`) is a separate Node-only artifact;
+      // it must never end up in the Workers server bundle (33.5MB gzip limit).
+      "./cli/**/*",
+    ]
   },
   images: {
     unoptimized: true
@@ -39,6 +48,10 @@ const nextConfig = {
     serverComponentsHmrCache: true,
     // Tree-shake heavy barrel imports to cut compile + bundle size
     optimizePackageImports: ["@xyflow/react", "@dnd-kit/core", "@dnd-kit/sortable", "material-symbols", "marked"],
+    // Limit build workers in memory-capped environments (see buildCpus above).
+    ...(buildCpus ? { cpus: buildCpus } : {}),
+    // Reduce webpack peak memory during compile (slower, fits 2GB CI sandboxes).
+    webpackMemoryOptimizations: true,
   },
   webpack: (config, { isServer }) => {
     // Ignore fs/path modules in browser bundle

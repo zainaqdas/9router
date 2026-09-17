@@ -2,11 +2,18 @@
 // Loaded only when process.versions.bun is present.
 import { PRAGMA_SQL } from "../schema.js";
 
+// Hide the specifier from static analysis: Next.js webpack externalizes it as a
+// bare require() that OpenNext's esbuild pass cannot resolve ("bun:" scheme),
+// which would fail the Workers middleware bundle. At runtime the call below is
+// only reached when process.versions.bun exists (Bun provides bun:sqlite).
+const BUN_SQLITE_MODULE = "bun:sqlite";
+
 const CHECKPOINT_INTERVAL_MS = 60 * 1000;
 
 export async function createBunSqliteAdapter(filePath) {
-  // Dynamic import — only resolves under Bun runtime
-  const { Database } = await import("bun:sqlite");
+  // Dynamic import — only resolves under Bun runtime (webpackIgnore keeps the
+  // specifier opaque to bundlers; Bun's native loader resolves it at runtime).
+  const { Database } = await /* webpackIgnore: true */ import(BUN_SQLITE_MODULE);
   const db = new Database(filePath, { create: true });
   db.exec(PRAGMA_SQL);
 

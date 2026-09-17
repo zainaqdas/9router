@@ -40,6 +40,13 @@ yarn-error.log*
 # vercel
 .vercel
 
+# cloudflare workers (opennext build output + local secrets)
+.open-next/
+.open-next-cli-build/
+.wrangler/
+.dev.vars
+cloudflare-env.d.ts
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
@@ -51,6 +58,7 @@ source/*
 .cursor/*
 docs/*
 !docs/ARCHITECTURE.md
+!docs/DEPLOY-CLOUDFLARE-WORKERS.md
 test/*
 open-sse/test/*
 RM.vn.md

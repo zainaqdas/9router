@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DATA_DIR } from '@/lib/dataDir';
+import { isWorkersRuntime } from '@/lib/runtime';
 
 const MACHINE_ID_FILE = path.join(DATA_DIR, 'machine-id');
 const AUTH_DIR = path.join(DATA_DIR, 'auth');
@@ -15,6 +16,19 @@ let cachedCliSecret = null;
 // even when machineIdSync fails or returns inconsistent values across runtimes.
 function loadRawMachineId() {
   if (cachedRawId) return cachedRawId;
+  // Workers (workerd): no host machine id exists and the FS is not writable.
+  // Prefer a stable value provided via env (MACHINE_ID) — a random UUID would
+  // change per isolate and invalidate API keys / CLI tokens between requests.
+  if (isWorkersRuntime()) {
+    const envId = String(process.env.MACHINE_ID || '').trim();
+    if (envId) {
+      cachedRawId = envId;
+    } else {
+      console.warn('[machineId] MACHINE_ID env is not set — generating a per-isolate random id. Set MACHINE_ID to a fixed value for stable keys/CLI tokens.');
+      cachedRawId = crypto.randomUUID();
+    }
+    return cachedRawId;
+  }
   try {
     cachedRawId = fs.readFileSync(MACHINE_ID_FILE, 'utf8').trim();
     if (cachedRawId) return cachedRawId;
@@ -34,6 +48,13 @@ function loadRawMachineId() {
 // Random secret persisted on first run → unpredictable CLI token even when machineId leaks.
 function loadCliSecret() {
   if (cachedCliSecret) return cachedCliSecret;
+  // Workers: no writable FS — derive the CLI secret deterministically from the
+  // machine id instead of reading/writing a file. Machine id is env-stable.
+  if (isWorkersRuntime()) {
+    const raw = loadRawMachineId();
+    cachedCliSecret = crypto.createHash('sha256').update(`cli-secret:${raw}`).digest('hex');
+    return cachedCliSecret;
+  }
   try {
     cachedCliSecret = fs.readFileSync(CLI_SECRET_FILE, 'utf8').trim();
     if (cachedCliSecret) return cachedCliSecret;

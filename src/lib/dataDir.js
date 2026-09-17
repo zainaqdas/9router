@@ -1,8 +1,16 @@
 import fs from "node:fs";
-import path from "path";
+import path from "node:path";
 import os from "os";
+import { isWorkersRuntime } from "./runtime.js";
 
 const APP_NAME = "9router";
+
+// Workers (workerd) have no writable real FS, but they do expose an ephemeral,
+// in-memory /tmp through the nodejs_compat fs module. It is cleared when the
+// isolate is evicted — treat it as scratch space, not durable storage.
+function workersDir() {
+  return "/tmp/.9router-workers";
+}
 
 function defaultDir() {
   if (process.platform === "win32") {
@@ -12,6 +20,15 @@ function defaultDir() {
 }
 
 export function getDataDir() {
+  // Workers: real FS is read-only. Never attempt mkdir on the configured path —
+  // that would throw EROFS at module scope and kill the whole worker. /tmp is
+  // the only writable location (ephemeral).
+  if (isWorkersRuntime()) {
+    const configured = process.env.DATA_DIR;
+    if (configured && !configured.includes("..")) return configured;
+    return workersDir();
+  }
+
   const configured = process.env.DATA_DIR;
   if (!configured) return defaultDir();
 
@@ -26,7 +43,7 @@ export function getDataDir() {
     fs.mkdirSync(configured, { recursive: true });
     return configured;
   } catch (e) {
-    if (e?.code === "EACCES" || e?.code === "EPERM") {
+    if (e?.code === "EACCES" || e?.code === "EPERM" || e?.code === "EROFS") {
       console.warn(`[DATA_DIR] '${configured}' not writable → fallback ~/.${APP_NAME}`);
       return defaultDir();
     }

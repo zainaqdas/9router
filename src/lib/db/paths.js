@@ -12,7 +12,14 @@ export const LEGACY_FILES = {
   details: path.join(DATA_DIR, "request-details.json"),
 };
 export function ensureDirs() {
+  // Workers: DATA_DIR points at the ephemeral /tmp mount. mkdir can still fail
+  // there (e.g. read-only edge runtimes) — fail soft instead of throwing out of
+  // DB init; individual write attempts surface their own errors.
   for (const dir of [DATA_DIR, DB_DIR, BACKUPS_DIR]) {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    try {
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      // ignore — writes will fail with their own error and callers handle it
+    }
   }
 }

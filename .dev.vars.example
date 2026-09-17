@@ -1,0 +1,17 @@
+# Copy to `.dev.vars` (gitignored) for `npm run preview:workers`.
+# NEXTJS_ENV controls which Next.js .env file is loaded in the worker runtime.
+NEXTJS_ENV=development
+
+# ── Recommended overrides for a Workers deployment ────────────────────────────
+# Dashboard login password (default 123456 — MUST change for any public deploy)
+# INITIAL_PASSWORD=change-me
+# JWT signing secret for the dashboard session cookie
+# JWT_SECRET=change-me-to-a-long-random-secret
+# Stable machine id: on Workers there is no host machine id, so set this to a
+# fixed random hex string, otherwise it is re-randomized per isolate (keys and
+# the CLI token would flap between isolates).
+# MACHINE_ID=change-me-to-a-fixed-random-hex-string
+# HMAC secret for generated API keys
+# API_KEY_SECRET=endpoint-proxy-api-key-secret
+# Salt for machine id hashing
+# MACHINE_ID_SALT=endpoint-proxy-salt
