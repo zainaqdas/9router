@@ -1,4 +1,11 @@
-# v0.5.75 (2026-09-10)
+# v0.5.76 (2026-09-17)
+
+## Features
+- **Cloudflare Workers**: durable state without ephemeral storage — the DB layer now hydrates the SQLite snapshot from a KV namespace (`DB_KV`) on isolate boot and flushes it back after writes (throttled to one put per 10s plus a `waitUntil` flush at request end), so provider connections, keys and settings survive eviction and redeploys. Worker entry (`src/worker-entry.js`) wraps the OpenNext handler and wires the binding; driver reports `sql.js+kv` when bound.
+- **Deployment docs**: `docs/DEPLOY-CLOUDFLARE-WORKERS.md` covers setup, secrets, the KV snapshot model and its limits (last-writer-wins isolates, KV write/value quotas).
+
+## Fixes
+- **Workers**: sql.js hydration passed the raw KV `ArrayBuffer` where a byte view is required — silently produced an empty database and re-ran migrations on every boot; now wrapped in `Uint8Array`.
 
 ## Features
 - **Video**: add OpenRouter and Vertex AI (Veo) video generation on `/v1/videos/*` via a provider adapter layer; poll requests resolve their provider from `x-connection-id` or `?provider=`

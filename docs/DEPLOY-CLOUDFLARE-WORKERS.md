@@ -22,7 +22,12 @@ npm run preview:workers    # local workerd preview via wrangler dev
 
 Worker name and bindings live in `wrangler.jsonc` (name: `ninerouter`).
 Static assets are served from the `.open-next/assets` directory via the
-`ASSETS` binding; no KV/R2/D1/DO bindings are required.
+`ASSETS` binding; a **KV namespace** (`DB_KV`) is bound for durable state
+(see below). Create your own namespace and put its id in `wrangler.jsonc`:
+
+```bash
+npx wrangler kv namespace create DB_KV
+```
 
 ## Environment variables
 
@@ -46,15 +51,22 @@ Secrets must **not** be placed in `.dev.vars` in production; `.dev.vars`
 
 - **Runtime detection** — `src/lib/runtime.js` (`isWorkersRuntime()`,
   `isLongLivedServer()`) gates everything Node-specific.
-- **SQLite layer** — workerd stubs `node:sqlite` and cannot load native
-  `better-sqlite3`, and only permits *pre-compiled* wasm modules, so the
-  driver chain resolves to the **sql.js asm.js build** (pure JS, no wasm) on
-  Workers. The DB lives in ephemeral `/tmp` (see limits below).
+- **SQLite layer + KV durability** — workerd stubs `node:sqlite` and cannot
+  load native `better-sqlite3`, and only permits *pre-compiled* wasm modules,
+  so the driver chain resolves to the **sql.js asm.js build** (pure JS, no
+  wasm) on Workers. sql.js cannot persist to disk in workerd, so the worker
+  entry (`src/worker-entry.js`) + `src/lib/db/adapters/workersKvStore.js`
+  keep the snapshot durable: hydrate from KV on isolate boot, mark writes
+  dirty, and flush the whole SQLite file back to KV (throttled to one put per
+  10s, plus a `flushSoon()` awaited through `ctx.waitUntil` at request end).
+  Driver reports `sql.js+kv` when the `DB_KV` binding is present, and falls
+  back to in-memory-only when it isn't.
 - **Machine ID** — `src/shared/utils/machineId.js` prefers `MACHINE_ID` env
   on Workers (no host id, no writable FS) and derives the CLI secret
   deterministically instead of persisting it.
-- **Data dir** — `src/lib/dataDir.js` points `DATA_DIR` at ephemeral `/tmp`
-  on Workers and never attempts `mkdir` on a read-only FS.
+- **Data dir** — `src/lib/dataDir.js` points `DATA_DIR` at a scratch dir
+  under `/tmp` on Workers (never attempts `mkdir` on a read-only FS); the
+  durable copy of the DB is the KV snapshot, not this dir.
 - **Background jobs** — token refresh and model-catalog sync schedulers are
   disabled on Workers (`instrumentation.js` + `isLongLivedServer()`; also
   honored via `DISABLE_BACKGROUND_JOBS=1` on any runtime).
@@ -66,18 +78,23 @@ Secrets must **not** be placed in `.dev.vars` in production; `.dev.vars`
 
 ## Functional limits on Workers
 
-1. **Ephemeral state.** The SQLite DB (provider connections, keys, aliases,
-   combos, settings) and usage stats live in the isolate's `/tmp` and are
-   **lost on isolate eviction/redeploy**. For durable state you'd need to
-   move the DB layer onto D1/KV/R2 — out of scope here.
-2. **No background schedulers.** Token refresh and catalog sync don't run;
+1. **KV snapshot durability (not per-statement).** State survives isolate
+   eviction and redeploys via the KV snapshot, but the flush window means a
+   worker killed mid-request can lose the last ~10s of writes. Concurrent
+   isolates last-writer-wins on the snapshot (fine for a single-user gateway;
+   don't run multi-writer load against it).
+2. **KV account limits.** Free tier: 1,000 writes/day (the throttle keeps a
+   quiet instance at ~8,640/day worst case — writes only happen when dirty)
+   and 25MB per value (the snapshot is currently ~176KB; heavy usage/request
+   logs grow it — prune via the dashboard if it approaches the limit).
+3. **No background schedulers.** Token refresh and catalog sync don't run;
    refresh still happens inline on 401/403 during live traffic.
 3. **No local-machine features.** CLI tool config writers, tunnel/Tailscale,
    MITM, headroom proxy, and update/shutdown endpoints are meaningless
    server-side and are blocked by the existing local-only guard.
 4. **No `open` (browser opening)** — desktop-only by design; import failures
    for its optional deps during OpenNext tracing are harmless.
-5. **Bundle size.** The worker is ~32MB raw / ~5MB gzip against the 3MB
+5. **Bundle size.** The worker is ~33MB raw / ~5MB gzip against the 3MB
    gzipped startup budget — cold starts may be slow and Cloudflare may warn
    at deploy. `cli/**` is already excluded from tracing to keep it lean.
 

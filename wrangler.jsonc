@@ -1,6 +1,8 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "main": ".open-next/worker.js",
+  // Custom entry (wraps the OpenNext worker): stashes env for the DB layer
+  // and flushes pending SQLite→KV snapshots via ctx.waitUntil.
+  "main": "src/worker-entry.js",
   "name": "ninerouter",
   "compatibility_date": "2025-09-15",
   "compatibility_flags": [
@@ -12,6 +14,14 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Durable DB snapshots (SQLite image of the whole app DB). The live engine
+  // stays in-memory sql.js; boot hydrates from here, writes flush back.
+  "kv_namespaces": [
+    {
+      "binding": "DB_KV",
+      "id": "3dab2b78748943d9a4f3095064c66c7e"
+    }
+  ],
   "services": [
     {
       "binding": "WORKER_SELF_REFERENCE",

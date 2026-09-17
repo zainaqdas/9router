@@ -71,7 +71,7 @@ async function initAdapter() {
     const adapter = await trySqlJs();
     if (!adapter) throw new Error("[DB] sql.js unavailable on Workers — asm.js build failed to load");
     if (!state.logged) {
-      console.log(`[DB] Driver: ${adapter.driver} | file: ${DATA_FILE} (ephemeral — Workers /tmp)`);
+      console.log(`[DB] Driver: ${adapter.driver} | KV snapshots: ${adapter.flushSoon ? "enabled" : "off"}`);
       state.logged = true;
     }
     const { runMigrationOnce } = await import("./migrate.js");
