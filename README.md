@@ -684,7 +684,7 @@ Seamless translation between formats:
 - 💻 **Localhost** - Default, works offline
 - ☁️ **VPS/Cloud** - Share across devices
 - 🐳 **Docker** - One-command deployment
-- 🚀 **Cloudflare Workers** - Global edge network
+- 🚀 **Cloudflare Workers** - Global edge network, durable KV-backed state → [full guide](docs/DEPLOY-CLOUDFLARE-WORKERS.md)
 
 </details>
 
@@ -1209,7 +1209,7 @@ Model: cc/claude-opus-4-7
 
 ```bash
 # Clone and install
-git clone https://github.com/decolua/9router.git
+git clone https://github.com/zainaqdas/9router.git
 cd 9router
 npm install
 npm run build
@@ -1259,8 +1259,8 @@ docker run -d \
 **Build from source (dev):**
 
 ```bash
-git clone https://github.com/decolua/9router.git
-cd 9router/app
+git clone https://github.com/zainaqdas/9router.git
+cd 9router
 docker build -t 9router .
 docker run -d --name 9router -p 20128:20128 \
   -v "$HOME/.9router:/app/data" -e DATA_DIR=/app/data 9router
@@ -1282,6 +1282,32 @@ docker pull decolua/9router:latest   # update to latest
 
 **Data persistence:** `$HOME/.9router/db/data.sqlite` on host ↔ `/app/data/db/data.sqlite` in container.
 
+### Cloudflare Workers
+
+Serverless deploy to Cloudflare's edge — one worker serves the dashboard and the `/v1` gateway, and all state survives redeploys via KV-backed SQLite snapshots:
+
+```bash
+npm install
+npx wrangler kv namespace create DB_KV   # paste the id into wrangler.jsonc
+npm run build:workers
+
+# Required secrets (remote login with the default password is blocked):
+openssl rand -hex 32   # JWT_SECRET
+openssl rand -hex 32   # API_KEY_SECRET
+openssl rand -hex 16   # MACHINE_ID (keeps generated API keys stable across isolates)
+openssl rand -hex 8    # INITIAL_PASSWORD
+echo "<value>" | npx wrangler secret put JWT_SECRET
+echo "<value>" | npx wrangler secret put API_KEY_SECRET
+echo "<value>" | npx wrangler secret put MACHINE_ID
+echo "<value>" | npx wrangler secret put INITIAL_PASSWORD
+
+npm run deploy:workers   # → https://ninerouter.<your-subdomain>.workers.dev
+```
+
+How it works on Workers: the DB runs as in-memory sql.js (pure-JS SQLite), hydrated from the `DB_KV` namespace on isolate boot and flushed back after writes; background schedulers and local-machine features (tunnel, MITM, tray) are disabled. On memory-limited build machines (≤2GB), use `NODE_OPTIONS=--max-old-space-size=768 NEXT_BUILD_CPUS=1 npm run build:workers`.
+
+→ Full step-by-step guide (architecture, config reference, verification, limits, troubleshooting): **[docs/DEPLOY-CLOUDFLARE-WORKERS.md](docs/DEPLOY-CLOUDFLARE-WORKERS.md)**
+
 ### Environment Variables
 
 | Variable                                             | Default                                  | Description                                                                         |
@@ -1298,6 +1324,7 @@ docker pull decolua/9router:latest   # update to latest
 | `NEXT_PUBLIC_CLOUD_URL`                              | `https://9router.com`                    | Backward-compatible/public cloud URL (prefer `CLOUD_URL` for server runtime)        |
 | `API_KEY_SECRET`                                     | `endpoint-proxy-api-key-secret`          | HMAC secret for generated API keys                                                  |
 | `MACHINE_ID_SALT`                                    | `endpoint-proxy-salt`                    | Salt for stable machine ID hashing                                                  |
+| `MACHINE_ID`                                         | auto (host machine id)                   | Override machine id — required on Cloudflare Workers (no host id); keeps API keys stable across isolates |
 | `ENABLE_REQUEST_LOGS`                                | `false`                                  | Enables request/response logs under `logs/`                                         |
 | `AUTH_COOKIE_SECURE`                                 | `false`                                  | Force `Secure` auth cookie (set `true` behind HTTPS reverse proxy)                  |
 | `REQUIRE_API_KEY`                                    | `false`                                  | Enforce Bearer API key on `/v1/*` routes (recommended for internet-exposed deploys) |
